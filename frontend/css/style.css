@@ -81,7 +81,7 @@ h1 {
   align-items: stretch;
   min-width: 0;
 }
-.teal-rectangle {
+.rectangle {
   width: 100%;
   background-color: #014f6e;
   padding: 40px;
