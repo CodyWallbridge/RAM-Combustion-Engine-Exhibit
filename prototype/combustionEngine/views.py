@@ -3,7 +3,6 @@ import random
 import time
 from django.http import JsonResponse
 
-# Globals (for example; in real Django apps, use session or database models)
 global percent
 percent = 0
 PERCENT_STEP = 10
@@ -27,9 +26,9 @@ def home(request):
     return HttpResponse('Home Page')
 
 
-# Called to send percentage update (could update database, cache, or respond)
+# Called to send percentage update (could update database)
 def send_percentage_to_display():
-    # Example: simply returns current percentage for demo
+    #returns current percentage for demo
     return JsonResponse({'percentage': percent})
 
 # Reset game cycle state
@@ -45,19 +44,18 @@ def randomize_order():
     current_order = stages[:]
     random.shuffle(current_order)
 
-# Send current stage info to kiosks (stub for your real communication method)
+# Send current stage info to kiosks (raspberry pie for your real communication method)
 def send_stage_number_to_kiosks():
-    # Example: just print or log; replace with real comms
+    # print or log current stage
     print(f"Current stage to attempt: {stages_order[current_stage_index]}")
 
-# Notify controller of button press (stub)
+# Notify controller of button press (raspberry)
 def send_pressed_event_to_controller(stage_number):
     print(f"Pressed event sent for stage: {stage_number}")
 
 # Receive pressed event from user (stub)
 def receive_pressed_event():
-    # Placeholder: in real scenario, capture from HTTP request or socket
-    # Here just simulate user input matching current stage or random
+    # simulate user input matching current stage or random
     pressed = random.choice(stages)
     print(f"Received pressed: {pressed}")
     return pressed
@@ -82,16 +80,16 @@ def increase_percentage(amount):
     percent = min(percent + amount, 100)
     send_percentage_to_display()
 
-# Log or process pressed input when partial progress made
+# Log pressed input when partial progress made
 def log_pressed(pressed):
     print(f"Correct button pressed: {pressed}")
 
-# Main game loop to be called by view or async task
+# Main loop to be called by view task
 def main_loop():
     global current_stage_index, last_percent_deduction_time, last_game_reset_time
     setup_game()
     while True:
-        # Simulate times in a loop; replace with real async/timers in practice
+        # Simulate times in a loop; replace with real timers in practice
         if time.time() - last_percent_deduction_time > 10:  # every 10 sec
             deduce_percentage(10)
             last_percent_deduction_time = time.time()
