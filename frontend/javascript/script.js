@@ -21,3 +21,17 @@ function createRipple(event) {
     if (button) {
     button.addEventListener('click', createRipple);
 }
+function updatePercentage() {
+    fetch('http://localhost:8000/api/percentage')
+      .then(response => response.json())
+      .then(data => {
+        const percentage = data.percentage || 0;
+        // Update display
+        document.getElementById('percentage-display').textContent = Math.round(percentage) + '%';
+        document.getElementById('progress-bar').style.width = percentage + '%';
+      })
+      .catch(() => {
+      });
+  }
+  updatePercentage();
+  setInterval(updatePercentage, 100);
