@@ -27,25 +27,21 @@ percentage_server_thread = None
 
 
 def send_percentage_to_display():
-    """Returns current percentage for demo"""
     return {'percentage': percent}
 
 
 def get_percentage_view():
-    """API endpoint to get current percentage"""
     global percent
     return {'percentage': percent}
 
 
 def set_percentage_view(new_percent):
-    """API endpoint to set percentage (for testing)"""
     global percent
     percent = max(0, min(100, float(new_percent)))  # Clamp between 0-100
     return {'percentage': percent, 'status': 'updated'}
 
 
 def reset_cycle():
-    """Reset game cycle state"""
     global stages_order, current_stage_index
     randomize_order()
     current_stage_index = 0
@@ -53,7 +49,6 @@ def reset_cycle():
 
 
 def randomize_order():
-    """Randomize the order in which stages must be completed"""
     global stages_order, stage_by_kiosk
     stages_order = stages.copy()
     random.shuffle(stages_order)
@@ -64,17 +59,14 @@ def randomize_order():
 
 
 def send_stage_number_to_kiosks():
-    """Send current stage info to kiosks"""
     print(f"Current stage to attempt: {stages_order[current_stage_index]}")
 
 
 def send_pressed_event_to_controller(stage_number):
-    """Notify controller of button press"""
     print(f"Pressed event sent for stage: {stage_number}")
 
 
 def receive_pressed_event():
-    """Receive pressed event from user (stub)"""
     # simulate user input matching current stage or random
     pressed = random.choice(stages)
     print(f"Received pressed: {pressed}")
@@ -82,7 +74,6 @@ def receive_pressed_event():
 
 
 def deduce_percentage(amount):
-    """Decrease percentage by amount and update display"""
     global percent
     percent = max(percent - amount, 0)
     print(f"Percentage decreased to: {percent}%")  # Debug log
@@ -90,40 +81,30 @@ def deduce_percentage(amount):
 
 
 def check_correct_stage(pressed):
-    """Check if pressed stage is the correct one in current order sequence"""
     return pressed == stages_order[current_stage_index]
 
 
 def cycle_completed():
-    """Check if the whole cycle/order has been completed"""
     return current_stage_index >= len(stages_order) - 1
 
 
 def increase_percentage(amount):
-    """Increase percentage by amount and update display"""
     global percent
     percent = min(percent + amount, 100)
     send_percentage_to_display()
 
 
 def log_pressed(pressed):
-    """Log pressed input when partial progress made"""
     print(f"Correct button pressed: {pressed}")
 
 
 def main_loop():
-    """Main loop to be called by view task"""
     global current_stage_index, last_percent_deduction_time, last_game_reset_time
     setup_game()
     while True:
-        # Simulate times in a loop; replace with real timers in practice
-        if time.time() - last_percent_deduction_time > 10:  # every 10 sec
-            deduce_percentage(10)
-            last_percent_deduction_time = time.time()
-
-        if time.time() - last_game_reset_time > 60:  # every 60 sec
-            reset_cycle()
-            last_game_reset_time = time.time()
+        # if time.time() - last_percent_deduction_time > 10:  # every 10 sec
+        #     deduce_percentage(10)
+        #     last_percent_deduction_time = time.time()
 
         pressed = receive_pressed_event()
 
@@ -139,19 +120,16 @@ def main_loop():
 
 
 def setup_game():
-    """Initialize the game"""
     reset_cycle()
 
 
 def get_page_for_stage(stage_name: str) -> str:
-    """Return the page path for the given stage"""
     # Extract number from 'stage1', 'stage2', etc.
     stage_num = stage_name.replace('stage', '') if isinstance(stage_name, str) else str(stage_name)
     return f"pages/stage{stage_num}.html"
 
 
 def print_mapping():
-    """Print kiosk -> stage -> page mapping"""
     print("Kiosk -> Stage -> Page")
     for kiosk in sorted(stage_by_kiosk.keys()):
         stage = stage_by_kiosk[kiosk]
@@ -160,7 +138,6 @@ def print_mapping():
 
 
 def start_percentage_server(port: int = 9000):
-    """Start HTTP server for percentage display on fixed port"""
     global percentage_server_thread
 
     def make_percentage_handler():
@@ -238,7 +215,6 @@ def start_percentage_server(port: int = 9000):
                     self.wfile.write(str(e).encode())
 
             def log_message(self, format, *args):
-                """Suppress default log messages"""
                 pass
 
         return PercentageHandler
@@ -253,7 +229,6 @@ def start_percentage_server(port: int = 9000):
 
 
 def start_kiosk_servers(base_port: int = 8001):
-    """Start one simple HTTP server per kiosk on consecutive ports"""
     global kiosk_server_threads
 
     def make_handler(kiosk_id):
@@ -346,7 +321,6 @@ def start_kiosk_servers(base_port: int = 8001):
                     self.wfile.write(str(e).encode())
 
             def log_message(self, format, *args):
-                """Suppress default log messages"""
                 pass
 
         return KioskHandler
@@ -366,12 +340,10 @@ def start_kiosk_servers(base_port: int = 8001):
 
 
 def mapping_view():
-    """Return kiosk to stage mapping"""
     return stage_by_kiosk
 
 
 def port_view(port_id):
-    """Return port, stage, and page info for a given port id"""
     try:
         port_id = int(port_id)
         if port_id in stage_by_kiosk:
@@ -389,7 +361,6 @@ def port_view(port_id):
 
 
 def randomize_view():
-    """Randomize stage order and update kiosk mapping"""
     try:
         randomize_order()
         return {
@@ -402,7 +373,6 @@ def randomize_view():
 
 
 def setup():
-    """Initialize display and kiosks"""
     # Randomize stage order
     randomize_order()
     # Send initial percentage to display
@@ -417,7 +387,6 @@ def setup():
 
 
 def loop():
-    """Main loop - listens for pressed events and manages game state"""
     global current_stage_index, last_percent_deduction_time, last_game_reset_time
     
     # Check if time to decrease percentage

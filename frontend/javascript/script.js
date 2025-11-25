@@ -22,16 +22,41 @@ function createRipple(event) {
     button.addEventListener('click', createRipple);
 }
 function updatePercentage() {
-    fetch('http://localhost:8000/api/percentage')
-      .then(response => response.json())
+    fetch('http://localhost:9000/api/percentage')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      })
       .then(data => {
         const percentage = data.percentage || 0;
         // Update display
-        document.getElementById('percentage-display').textContent = Math.round(percentage) + '%';
-        document.getElementById('progress-bar').style.width = percentage + '%';
+        const displayElement = document.getElementById('percentage-display');
+        const progressBar = document.getElementById('progress-bar');
+        if (displayElement) {
+          displayElement.textContent = Math.round(percentage) + '%';
+        }
+        if (progressBar) {
+          progressBar.style.width = percentage + '%';
+        }
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('Error fetching percentage:', error);
       });
   }
-  updatePercentage();
-  setInterval(updatePercentage, 100);
+
+// Initialize polling when DOM is ready
+function initPercentagePolling() {
+  const displayElement = document.getElementById('percentage-display');
+  if (displayElement) {
+    console.log('Starting percentage polling...');
+    updatePercentage();
+    setInterval(updatePercentage, 100);
+  } else {
+    console.error('percentage-display element not found!');
+  }
+}
+
+// Since script is at bottom of body, DOM is ready
+initPercentagePolling();
