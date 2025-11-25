@@ -7,14 +7,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
 global percent
-percent = 50
+percent = 0
 PERCENT_STEP = 10
 MAX_PERCENT = 100
 MIN_PERCENT = 0
 KIOSK_IDS = [1, 2, 3, 4]
 stages = ['stage1', 'stage2', 'stage3', 'stage4']
 stages_order = []  # To be randomized
-current_stage_index = 0
+current_stage_index = 0  # Index in stages list (0=stage1, 1=stage2, 2=stage3, 3=stage4)
 last_percent_deduction_time = time.time()
 last_game_reset_time = time.time()
 
@@ -24,6 +24,11 @@ current_cycle_index = 0
 
 kiosk_server_threads = []
 percentage_server_thread = None
+
+# Global state for loading screen
+show_loading = False
+loading_timeout = None
+last_click_result = None  # 'correct' or 'incorrect'
 
 
 def send_percentage_to_display():
@@ -41,10 +46,37 @@ def set_percentage_view(new_percent):
     return {'percentage': percent, 'status': 'updated'}
 
 
+def trigger_loading():
+    """Trigger loading screen on all kiosks"""
+    global show_loading, loading_timeout
+    show_loading = True
+    if loading_timeout:
+        loading_timeout.cancel()
+    loading_timeout = threading.Timer(3.0, reset_loading)
+    loading_timeout.start()
+    return {'status': 'loading_triggered'}
+
+
+def reset_loading():
+    """Reset loading screen state"""
+    global show_loading, last_click_result
+    show_loading = False
+    last_click_result = None  # Clear result when loading resets
+
+
+def get_loading_state():
+    """Get current loading state"""
+    global show_loading, last_click_result
+    return {
+        'show_loading': show_loading,
+        'click_result': last_click_result
+    }
+
+
 def reset_cycle():
     global stages_order, current_stage_index
     randomize_order()
-    current_stage_index = 0
+    current_stage_index = 0  # Always start with stage1
     send_stage_number_to_kiosks()
 
 
@@ -52,14 +84,32 @@ def randomize_order():
     global stages_order, stage_by_kiosk
     stages_order = stages.copy()
     random.shuffle(stages_order)
-    # Assign randomized stages to kiosks
-    for i, kiosk in enumerate(KIOSK_IDS):
-        stage_by_kiosk[kiosk] = stages_order[i]
+    available_kiosks = KIOSK_IDS.copy()
+    random.shuffle(available_kiosks)
+    
+    for i, stage in enumerate(stages_order):
+        stage_by_kiosk[available_kiosks[i]] = stage
+    
     return stages_order
 
 
 def send_stage_number_to_kiosks():
-    print(f"Current stage to attempt: {stages_order[current_stage_index]}")
+    global current_stage_index, stage_by_kiosk
+    current_target_stage = stages[current_stage_index]
+    
+    # Find which kiosk has this stage
+    kiosk_with_stage = None
+    for kiosk_id, stage in stage_by_kiosk.items():
+        if stage == current_target_stage:
+            kiosk_with_stage = kiosk_id
+            break
+    
+    if kiosk_with_stage:
+        # Calculate port: base_port (8001) + (kiosk_id - 1) since kiosk 1 is at index 0
+        port = 8001 + (kiosk_with_stage - 1)
+        print(f"Port {port} ({current_target_stage})")
+    else:
+        print(f"Current stage to attempt: {current_target_stage} (not found on any kiosk)")
 
 
 def send_pressed_event_to_controller(stage_number):
@@ -80,17 +130,22 @@ def deduce_percentage(amount):
     send_percentage_to_display()
 
 
-def check_correct_stage(pressed):
-    return pressed == stages_order[current_stage_index]
+def check_correct_stage(pressed_stage):
+    """Check if the pressed stage matches the current target stage"""
+    global current_stage_index
+    current_target_stage = stages[current_stage_index]
+    return pressed_stage == current_target_stage
 
 
 def cycle_completed():
-    return current_stage_index >= len(stages_order) - 1
+    """Check if we've completed all 4 stages"""
+    return current_stage_index >= len(stages) - 1
 
 
 def increase_percentage(amount):
     global percent
     percent = min(percent + amount, 100)
+    print(f"Percentage increased to: {percent}%")  # Debug log
     send_percentage_to_display()
 
 
@@ -124,7 +179,6 @@ def setup_game():
 
 
 def get_page_for_stage(stage_name: str) -> str:
-    # Extract number from 'stage1', 'stage2', etc.
     stage_num = stage_name.replace('stage', '') if isinstance(stage_name, str) else str(stage_name)
     return f"pages/stage{stage_num}.html"
 
@@ -258,7 +312,41 @@ def start_kiosk_servers(base_port: int = 8001):
                         self.wfile.write(content)
                         return
 
+                    if self.path.startswith("/api/loading/trigger"):
+                        response_data = trigger_loading()
+                        content = json.dumps(response_data).encode()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                        return
+
+                    if self.path.startswith("/api/loading/state"):
+                        response_data = get_loading_state()
+                        content = json.dumps(response_data).encode()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                        return
+
                     if self.path == "/" or self.path == "":
+                        # Check if we should show loading screen
+                        if show_loading:
+                            page_path = os.path.join(frontend_dir, "pages", "loading.html")
+                            if os.path.exists(page_path):
+                                with open(page_path, "rb") as f:
+                                    content = f.read()
+                                self.send_response(200)
+                                self.send_header("Content-Type", "text/html")
+                                self.send_header("Content-Length", str(len(content)))
+                                self.end_headers()
+                                self.wfile.write(content)
+                                return
                         stage = stage_by_kiosk.get(kiosk_id)
                         if stage is None:
                             self.send_response(404)
@@ -314,6 +402,71 @@ def start_kiosk_servers(base_port: int = 8001):
                     self.end_headers()
                     self.wfile.write(b"Not found")
 
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    self.wfile.write(str(e).encode())
+
+            def do_POST(self):
+                """Handle POST requests (button presses)"""
+                try:
+                    if self.path.startswith("/api/button/press"):
+                        # Get which stage this kiosk has
+                        pressed_stage = stage_by_kiosk.get(kiosk_id)
+                        
+                        if pressed_stage:
+                            # Check if this is the correct stage to press
+                            global last_click_result, current_stage_index
+                            if check_correct_stage(pressed_stage):
+                                increase_percentage(15)
+                                
+                                current_stage_index = (current_stage_index + 1) % len(stages)
+                                
+                                log_pressed(pressed_stage)
+                                send_stage_number_to_kiosks()  # Print new target stage
+                                
+                                # Set result for loading screen
+                                last_click_result = 'correct'
+                                
+                                response_data = {
+                                    'status': 'correct',
+                                    'stage': pressed_stage,
+                                    'next_stage': stages[current_stage_index],
+                                    'percentage': percent
+                                }
+                            else:
+                                # Wrong stage pressed, reset to stage1
+                                current_stage_index = 0
+                                send_stage_number_to_kiosks()
+                                
+                                # Set result for loading screen
+                                last_click_result = 'incorrect'
+                                
+                                response_data = {
+                                    'status': 'incorrect',
+                                    'pressed': pressed_stage,
+                                    'expected': stages[current_stage_index],
+                                    'reset_to': 'stage1'
+                                }
+                        else:
+                            response_data = {'error': 'No stage assigned to this kiosk'}
+                        
+                        # Trigger loading on all kiosks
+                        trigger_loading()
+                        
+                        content = json.dumps(response_data).encode()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                        return
+                    else:
+                        self.send_response(404)
+                        self.end_headers()
+                        self.wfile.write(b"Not found")
                 except Exception as e:
                     self.send_response(500)
                     self.send_header("Content-Type", "text/plain")
@@ -388,16 +541,9 @@ def setup():
 
 def loop():
     global current_stage_index, last_percent_deduction_time, last_game_reset_time
-    
-    # Check if time to decrease percentage
-    if time.time() - last_percent_deduction_time > 10:  # every 10 sec
-        deduce_percentage(PERCENT_STEP)
-        last_percent_deduction_time = time.time()
-
-    # Check if time to reset cycle
-    if time.time() - last_game_reset_time > 60:  # every 60 sec
-        reset_cycle()
-        last_game_reset_time = time.time()
+    # if time.time() - last_percent_deduction_time > 30:  # every 30 sec
+    #     deduce_percentage(PERCENT_STEP)
+    #     last_percent_deduction_time = time.time()
 
 if __name__ == "__main__":
     setup()

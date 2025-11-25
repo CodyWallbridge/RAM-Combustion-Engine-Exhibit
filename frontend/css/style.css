@@ -46,6 +46,13 @@ main {
   opacity: 0;
   animation: fadeInUp 0.6s ease-out 0.2s forwards;
 }
+.restoring-content .header-section,
+.restoring-content .rectangle,
+.restoring-content .diagram-container,
+.restoring-content .red-button {
+  animation: none !important;
+  opacity: 0;
+}
 h1 {
   font-size: 56px;
   font-weight: 700;
@@ -276,4 +283,25 @@ span.ripple {
     opacity: 1;
     transform: translateX(0);
   }
+}
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.fade-out {
+  animation: fadeOut 0.4s ease-out forwards;
+}
+.fade-in {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+.loading-fade-in {
+  opacity: 0;
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+.loading-fade-out {
+  animation: fadeOut 0.4s ease-out forwards;
 }
