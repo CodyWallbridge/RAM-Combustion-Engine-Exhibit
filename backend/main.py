@@ -79,6 +79,12 @@ def reset_cycle():
     current_stage_index = 0  # Always start with stage1
     send_stage_number_to_kiosks()
 
+def restart_cycle():
+    global current_stage_index, percent
+    current_stage_index = 0  # Always start with stage1
+    percent = max(percent - 10, 0)
+    send_stage_number_to_kiosks()
+    send_percentage_to_display()
 
 def randomize_order():
     global stages_order, stage_by_kiosk
@@ -436,9 +442,7 @@ def start_kiosk_servers(base_port: int = 8001):
                                     'percentage': percent
                                 }
                             else:
-                                # Wrong stage pressed, reset to stage1
-                                current_stage_index = 0
-                                send_stage_number_to_kiosks()
+                                restart_cycle()
                                 
                                 # Set result for loading screen
                                 last_click_result = 'incorrect'

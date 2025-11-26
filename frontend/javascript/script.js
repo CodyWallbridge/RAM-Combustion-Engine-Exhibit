@@ -86,6 +86,7 @@ function switchToLoadingPage() {
             
             main.innerHTML = `
                 <div class="percentage-container loading-fade-in">
+                    <div id="label" class="label"></div>
                     <div id="percentage-display" class="percentage-display">Loading</div>
                 </div>
             `;
@@ -101,6 +102,11 @@ function switchToLoadingPage() {
                         const message = data.click_result === 'correct' ? 'Correct!' : 
                                        data.click_result === 'incorrect' ? 'Incorrect.' : 'Loading';
                         displayElement.textContent = message;
+                        if (data.click_result === 'incorrect') {
+                            print("incorrect")
+                            const label = document.getElementById('label');
+                            label.textContent = "Restart cycle from stage 1!"; 
+                        }
                     }
                 })
                 .catch(error => {
@@ -163,6 +169,12 @@ function checkLoadingState() {
                     if (displayElement.textContent !== message) {
                         displayElement.textContent = message;
                     }
+                    if (data.click_result === 'incorrect') {
+                        const label = document.getElementById('label');
+                        if (label) {
+                            label.textContent = "Restart cycle from stage 1!";
+                        }
+                    }
                 }
             }
             if (data.show_loading && !isCurrentlyShowingLoading) {
@@ -197,6 +209,12 @@ if (isStagePage) {
             const displayElement = document.getElementById('percentage-display');
             if (displayElement) {
                 displayElement.textContent = message;
+            }
+            if (data.click_result === 'incorrect') {
+                const label = document.getElementById('label');
+                if (label) {
+                    label.textContent = "Restart cycle from stage 1!";
+                }
             }
         })
         .catch(error => {
