@@ -5,6 +5,10 @@ function createRipple(event) {
     const circle = document.createElement("span");
     const diameter = Math.max(btnRect.width, btnRect.height);
     const radius = diameter / 2;
+    const redButton = document.querySelector('.red-button');
+    const percentageDisplay = document.getElementById('percentage-display');
+    const isOnLoadingPage = percentageDisplay && percentageDisplay.textContent === 'Loading';
+    const isStagePage = redButton && !isOnLoadingPage;
     circle.style.width = circle.style.height = `${diameter}px`;
     circle.style.left = `${event.clientX - (btnRect.left + radius)}px`;
     circle.style.top = `${event.clientY - (btnRect.top + radius)}px`;
@@ -96,6 +100,7 @@ if (document.getElementById('percentage-display') && document.getElementById('pr
 let originalPageContent = null;
 let isCurrentlyShowingLoading = false;
 let isFadingOut = false;
+let isRestoringContent = false;
 
 function switchToLoadingPage() {
     if (isCurrentlyShowingLoading || isFadingOut) return; 
@@ -141,7 +146,8 @@ function switchToLoadingPage() {
 }
 
 function restoreOriginalPage() {
-    if (!isCurrentlyShowingLoading) return; 
+    if (!isCurrentlyShowingLoading || isRestoringContent) return; 
+    isRestoringContent = true;
     const main = document.querySelector('main');
     if (main && originalPageContent) {
         const loadingContainer = main.querySelector('.percentage-container');
@@ -151,12 +157,6 @@ function restoreOriginalPage() {
             main.classList.add('fade-out');
         }
         setTimeout(() => {
-            if (loadingContainer) {
-                loadingContainer.classList.remove('loading-fade-out');
-            } else {
-                main.classList.remove('fade-out');
-            }           
-            main.classList.add('restoring-content');
             
             main.innerHTML = originalPageContent;
             isCurrentlyShowingLoading = false;
@@ -164,12 +164,9 @@ function restoreOriginalPage() {
             setTimeout(() => {
                 main.classList.remove('restoring-content');
                 
-                // Get the kiosk stage FIRST before setting up button
                 getCurrentKioskStage().then(() => {
-                    // THEN check completed stages to set disabled state
                     checkCompletedStages();
                     
-                    // FINALLY set up the button event listeners
                     const redButton = main.querySelector('.red-button');
                     if (redButton) {
                         let isProcessing = false;
@@ -207,8 +204,11 @@ function restoreOriginalPage() {
                 });
                 
                 checkReloadState();
+                isRestoringContent = false;
             }, 50);
         }, 400);
+    } else {
+        isRestoringContent = false;
     }
 }
 
@@ -302,7 +302,6 @@ function checkCompletedStages() {
                         existingRipples[0].remove();
                     }
                     redButton.disabled = true;
-                    // DON'T set opacity inline - use a class instead
                     redButton.classList.add('button-disabled');
                     if (redButton.textContent !== 'Stage already selected!') {
                         redButton.setAttribute('data-original-text', redButton.textContent);
@@ -310,7 +309,6 @@ function checkCompletedStages() {
                     }
                 } else {
                     redButton.disabled = false;
-                    // Remove the class instead of setting inline opacity
                     redButton.classList.remove('button-disabled');
                     const originalText = redButton.getAttribute('data-original-text');
                     if (originalText) {
