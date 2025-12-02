@@ -480,6 +480,24 @@ def start_kiosk_servers(base_port: int = 8001):
     return threads
 
 
+def percentage_decrement_worker():
+    global percent
+    while True:
+        try:
+            time.sleep(5.0)
+            if isinstance(percent, (int, float)) and percent > 0:
+                percent = max(0, percent - 1)
+                print(f"Percentage decreased to: {percent}%")
+        except Exception:
+            pass
+
+
+def start_percentage_decrement_thread():
+    t = threading.Thread(target=percentage_decrement_worker, daemon=True)
+    t.start()
+    print("Started percentage decrement thread (decreases by 1 every 3s)")
+
+
 def setup():
     # Randomize stage order
     randomize_order()
@@ -488,6 +506,8 @@ def setup():
     # Start servers
     start_percentage_server(9000)
     start_kiosk_servers(8001)
+    # Start background thread that decrements percentage every 3 seconds
+    start_percentage_decrement_thread()
     print("\nAll servers started!")
     print_mapping()
 
