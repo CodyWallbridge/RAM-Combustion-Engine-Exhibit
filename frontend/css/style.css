@@ -46,6 +46,13 @@ main {
   opacity: 0;
   animation: fadeInUp 0.6s ease-out 0.2s forwards;
 }
+.restoring-content .header-section,
+.restoring-content .rectangle,
+.restoring-content .diagram-container,
+.restoring-content .red-button {
+  animation: none !important;
+  opacity: 0;
+}
 h1 {
   font-size: 56px;
   font-weight: 700;
@@ -93,6 +100,7 @@ h1 {
   opacity: 0;
   animation: fadeInLeft 0.6s ease-out 0.4s forwards;
   min-width: none;
+  height: 100%;
 }
 .content-header {
   color: rgba(255, 255, 255, 0.9);
@@ -132,28 +140,35 @@ h1 {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   min-width: 0;
 }
 .diagram-container {
   position: relative;
   width: 100%;
   max-width: 380px;
-  margin-bottom: 24px;
   background: white;
   border-radius: 12px;
   padding: 24px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
   opacity: 0;
   animation: fadeInRight 0.6s ease-out 0.6s forwards;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  margin-bottom: 0;
+  min-height: 0;
 }
 .diagram-image {
-  max-height: 400px;
+  max-height: 350px;
   height: auto;
   display: block;
   margin: auto;
   background-color: transparent;
   border-radius: 8px;
+  width: 100%;
+  object-fit: contain;
 }
 .diagram-label {
   text-align: center;
@@ -172,7 +187,8 @@ h1 {
   font-weight: 600;
   border-radius: 8px;
   cursor: pointer;
-  margin-top: 20px;
+  margin-top: 24px;
+  margin-bottom: 0;
   box-shadow: 0 4px 12px rgba(211, 47, 47, 0.3);
   letter-spacing: 0.3px;
   text-transform: uppercase;
@@ -185,6 +201,8 @@ h1 {
   align-items: center;
   justify-content: center;
   transition: background 400ms;
+  align-self: center;
+  flex-shrink: 0;
 }
 span.ripple {
   position: absolute;
@@ -193,6 +211,42 @@ span.ripple {
   animation: ripple 600ms linear;
   background-color: rgba(255, 255, 255, 0.7);
   pointer-events: none;
+}
+.percentage-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem;
+}
+.percentage-display {
+  font-size: 8rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin-bottom: 2rem;
+}
+.progress-container {
+  width: 80%;
+  max-width: 600px;
+  height: 40px;
+  background-color: #e0e0e0;
+  border-radius: 20px;
+  overflow: hidden;
+  margin-top: 2rem;
+}
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #d32f2f 0%, #cb5252 100%);
+  width: 0%;
+  transition: width 0.3s ease;
+  border-radius: 20px;
+}
+.label {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #666;
+  margin-bottom: 1rem;
 }
 @keyframes ripple {
   to {
@@ -229,4 +283,25 @@ span.ripple {
     opacity: 1;
     transform: translateX(0);
   }
+}
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.fade-out {
+  animation: fadeOut 0.4s ease-out forwards;
+}
+.fade-in {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+.loading-fade-in {
+  opacity: 0;
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+.loading-fade-out {
+  animation: fadeOut 0.4s ease-out forwards;
 }
