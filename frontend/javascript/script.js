@@ -1,5 +1,6 @@
 function createRipple(event) {
     const button = event.currentTarget;
+    if (button.disabled) return;
     const btnRect = button.getBoundingClientRect();
     const circle = document.createElement("span");
     const diameter = Math.max(btnRect.width, btnRect.height);
@@ -8,30 +9,51 @@ function createRipple(event) {
     circle.style.left = `${event.clientX - (btnRect.left + radius)}px`;
     circle.style.top = `${event.clientY - (btnRect.top + radius)}px`;
     circle.classList.add("ripple");
-    const ripple = button.getElementsByClassName("ripple")[0];
-    if (ripple) {
-        ripple.remove();
+    const existingRipples = button.getElementsByClassName("ripple");
+    while (existingRipples.length > 0) {
+        existingRipples[0].remove();
     }
     button.appendChild(circle);
     circle.addEventListener('animationend', () => {
         circle.remove();
     });
-    }
-    const button = document.querySelector('.red-button');
-    if (button) {
+}
+
+const button = document.querySelector('.red-button');
+if (button) {
     button.addEventListener('click', createRipple);
+    let isProcessing = false;
     button.addEventListener('click', function() {
+        if (button.disabled || isProcessing) return;
+        isProcessing = true;
+        button.setAttribute('data-processing', 'true');
+        button.disabled = true;
         const currentPort = window.location.port || '8001';
         fetch(`http://localhost:${currentPort}/api/button/press`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             }
-        }).catch(error => {
+        })
+        .then(response => response.json())
+        .then(data => {
+            isProcessing = false;
+            button.removeAttribute('data-processing');
+            if (data.completed_stages !== undefined) {
+                setTimeout(() => {
+                    checkCompletedStages();
+                }, 100);
+            }
+        })
+        .catch(error => {
             console.error('Error triggering loading:', error);
+            isProcessing = false;
+            button.removeAttribute('data-processing');
+            button.disabled = false;
         });
     });
 }
+
 function updatePercentage() {
     fetch('http://localhost:9000/api/percentage')
       .then(response => {
@@ -54,7 +76,8 @@ function updatePercentage() {
       .catch((error) => {
         console.error('Error fetching percentage:', error);
       });
-  }
+}
+
 function initPercentagePolling() {
   const displayElement = document.getElementById('percentage-display');
   if (displayElement) {
@@ -65,12 +88,15 @@ function initPercentagePolling() {
     console.error('percentage-display element not found!');
   }
 }
+
 if (document.getElementById('percentage-display') && document.getElementById('progress-bar')) {
     initPercentagePolling();
 }
+
 let originalPageContent = null;
 let isCurrentlyShowingLoading = false;
 let isFadingOut = false;
+
 function switchToLoadingPage() {
     if (isCurrentlyShowingLoading || isFadingOut) return; 
     const main = document.querySelector('main');
@@ -103,7 +129,6 @@ function switchToLoadingPage() {
                                        data.click_result === 'incorrect' ? 'Incorrect.' : 'Loading';
                         displayElement.textContent = message;
                         if (data.click_result === 'incorrect') {
-                            print("incorrect")
                             const label = document.getElementById('label');
                             label.textContent = "Restart cycle from stage 1!"; 
                         }
@@ -114,6 +139,7 @@ function switchToLoadingPage() {
         }, 400);
     }
 }
+
 function restoreOriginalPage() {
     if (!isCurrentlyShowingLoading) return; 
     const main = document.querySelector('main');
@@ -132,30 +158,60 @@ function restoreOriginalPage() {
             }           
             main.classList.add('restoring-content');
             
-            // Insert the content
             main.innerHTML = originalPageContent;
             isCurrentlyShowingLoading = false;
+            
             setTimeout(() => {
                 main.classList.remove('restoring-content');
-                const redButton = main.querySelector('.red-button');
-                if (redButton) {
-                    redButton.addEventListener('click', createRipple);
-                    redButton.addEventListener('click', function() {
-                        const currentPort = window.location.port || '8001';
-                        fetch(`http://localhost:${currentPort}/api/button/press`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            }
-                        }).catch(error => {
-                            console.error('Error triggering loading:', error);
+                
+                // Get the kiosk stage FIRST before setting up button
+                getCurrentKioskStage().then(() => {
+                    // THEN check completed stages to set disabled state
+                    checkCompletedStages();
+                    
+                    // FINALLY set up the button event listeners
+                    const redButton = main.querySelector('.red-button');
+                    if (redButton) {
+                        let isProcessing = false;
+                        redButton.addEventListener('click', createRipple);
+                        redButton.addEventListener('click', function() {
+                            if (redButton.disabled || isProcessing) return;
+                            isProcessing = true;
+                            redButton.setAttribute('data-processing', 'true');
+                            redButton.disabled = true;
+                            const currentPort = window.location.port || '8001';
+                            fetch(`http://localhost:${currentPort}/api/button/press`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                }
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                isProcessing = false;
+                                redButton.removeAttribute('data-processing');
+                                if (data.completed_stages !== undefined) {
+                                    setTimeout(() => {
+                                        checkCompletedStages();
+                                    }, 100);
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Error triggering loading:', error);
+                                isProcessing = false;
+                                redButton.removeAttribute('data-processing');
+                                redButton.disabled = false;
+                            });
                         });
-                    });
-                }
+                    }
+                });
+                
+                checkReloadState();
             }, 50);
         }, 400);
     }
 }
+
 function checkLoadingState() {
     const currentPort = window.location.port || '8001';
     fetch(`http://localhost:${currentPort}/api/loading/state`)
@@ -181,12 +237,94 @@ function checkLoadingState() {
                 switchToLoadingPage();
             } else if (!data.show_loading && isCurrentlyShowingLoading) {
                 restoreOriginalPage();
+                setTimeout(() => {
+                    checkReloadState();
+                }, 600);
+            }
+            
+            if (!data.show_loading && !isCurrentlyShowingLoading) {
+                checkReloadState();
             }
         })
         .catch(error => {
             console.error('Error checking loading state:', error);
         });
 }
+
+function checkReloadState() {
+    const currentPort = window.location.port || '8001';
+    fetch(`http://localhost:${currentPort}/api/reload`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.reload) {
+                setTimeout(() => {
+                    window.location.reload();
+                }, 100);
+            }
+        })
+        .catch(error => {
+            console.error('Error checking reload state:', error);
+        });
+}
+
+let currentKioskStage = null;
+
+function getCurrentKioskStage() {
+    const currentPort = window.location.port || '8001';
+    return fetch(`http://localhost:${currentPort}/api/stage`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.stage) {
+                currentKioskStage = data.stage;
+                return data.stage;
+            }
+            return null;
+        })
+        .catch(error => {
+            console.error('Error fetching current stage:', error);
+            return null;
+        });
+}
+
+function checkCompletedStages() {
+    const currentPort = window.location.port || '8001';
+    fetch(`http://localhost:${currentPort}/api/completed-stages`)
+        .then(response => response.json())
+        .then(data => {
+            const completedStages = data.completed_stages || [];
+            const redButton = document.querySelector('.red-button');
+            
+            if (redButton && currentKioskStage) {
+                const isProcessing = redButton.getAttribute('data-processing') === 'true';
+                if (completedStages.includes(currentKioskStage) || isProcessing) {
+                    const existingRipples = redButton.getElementsByClassName("ripple");
+                    while (existingRipples.length > 0) {
+                        existingRipples[0].remove();
+                    }
+                    redButton.disabled = true;
+                    // DON'T set opacity inline - use a class instead
+                    redButton.classList.add('button-disabled');
+                    if (redButton.textContent !== 'Stage already selected!') {
+                        redButton.setAttribute('data-original-text', redButton.textContent);
+                        redButton.textContent = 'Stage already selected!';
+                    }
+                } else {
+                    redButton.disabled = false;
+                    // Remove the class instead of setting inline opacity
+                    redButton.classList.remove('button-disabled');
+                    const originalText = redButton.getAttribute('data-original-text');
+                    if (originalText) {
+                        redButton.textContent = originalText;
+                        redButton.removeAttribute('data-original-text');
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error checking completed stages:', error);
+        });
+}
+
 const redButton = document.querySelector('.red-button');
 const percentageDisplay = document.getElementById('percentage-display');
 const isOnLoadingPage = percentageDisplay && percentageDisplay.textContent === 'Loading';
@@ -197,8 +335,16 @@ if (isStagePage) {
     if (main) {
         originalPageContent = main.innerHTML;
     }
+    getCurrentKioskStage().then(() => {
+        checkCompletedStages();
+    });
     checkLoadingState();
     setInterval(checkLoadingState, 100);
+    checkReloadState();
+    setInterval(checkReloadState, 100);
+    setInterval(() => {
+        checkCompletedStages();
+    }, 200);
 } else if (isOnLoadingPage) {
     const currentPort = window.location.port || '8001';
     fetch(`http://localhost:${currentPort}/api/loading/state`)
@@ -244,4 +390,6 @@ if (isStagePage) {
         });    
     checkLoadingState();
     setInterval(checkLoadingState, 100);
+    checkReloadState();
+    setInterval(checkReloadState, 100);
 }

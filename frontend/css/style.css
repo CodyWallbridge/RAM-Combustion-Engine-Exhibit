@@ -305,3 +305,7 @@ span.ripple {
 .loading-fade-out {
   animation: fadeOut 0.4s ease-out forwards;
 }
+.red-button.button-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
