@@ -4,46 +4,32 @@ import threading
 import os
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
 
 global percent
 percent = 0
-PERCENT_STEP = 10
-MAX_PERCENT = 100
-MIN_PERCENT = 0
 KIOSK_IDS = [1, 2, 3, 4]
 stages = ['stage1', 'stage2', 'stage3', 'stage4']
 stages_order = []  # To be randomized
 current_stage_index = 0  # Index in stages list (0=stage1, 1=stage2, 2=stage3, 3=stage4)
-last_percent_deduction_time = time.time()
-last_game_reset_time = time.time()
 
 stage_by_kiosk = {}  # To be filled based on stage_order
-completed = {1: False, 2: False, 3: False, 4: False}
-current_cycle_index = 0
 
-kiosk_server_threads = []
-percentage_server_thread = None
+# Track completed stages in current cycle
+completed_stages_in_cycle = []
 
 # Global state for loading screen
 show_loading = False
 loading_timeout = None
 last_click_result = None  # 'correct' or 'incorrect'
 
-
-def send_percentage_to_display():
-    return {'percentage': percent}
+# Global state for reload
+reload_triggered = False
+reload_timeout = None
 
 
 def get_percentage_view():
     global percent
     return {'percentage': percent}
-
-
-def set_percentage_view(new_percent):
-    global percent
-    percent = max(0, min(100, float(new_percent)))  # Clamp between 0-100
-    return {'percentage': percent, 'status': 'updated'}
 
 
 def trigger_loading():
@@ -59,9 +45,10 @@ def trigger_loading():
 
 def reset_loading():
     """Reset loading screen state"""
-    global show_loading, last_click_result
+    global show_loading, last_click_result, reload_triggered
     show_loading = False
     last_click_result = None  # Clear result when loading resets
+    # Reload is already triggered, it will be checked by frontend
 
 
 def get_loading_state():
@@ -71,6 +58,30 @@ def get_loading_state():
         'show_loading': show_loading,
         'click_result': last_click_result
     }
+
+
+def trigger_reload():
+    """Trigger reload on all kiosks"""
+    global reload_triggered, reload_timeout
+    reload_triggered = True
+    if reload_timeout:
+        reload_timeout.cancel()
+    reload_timeout = threading.Timer(5.0, reset_reload)
+    reload_timeout.start()
+    return {'status': 'reload_triggered'}
+
+
+def get_reload_state():
+    """Get current reload state"""
+    global reload_triggered
+    return {'reload': reload_triggered}
+
+
+def reset_reload():
+    """Reset reload state"""
+    global reload_triggered, reload_timeout
+    reload_triggered = False
+    reload_timeout = None
 
 
 def reset_cycle():
@@ -84,7 +95,6 @@ def restart_cycle():
     current_stage_index = 0  # Always start with stage1
     percent = max(percent - 10, 0)
     send_stage_number_to_kiosks()
-    send_percentage_to_display()
 
 def randomize_order():
     global stages_order, stage_by_kiosk
@@ -118,24 +128,6 @@ def send_stage_number_to_kiosks():
         print(f"Current stage to attempt: {current_target_stage} (not found on any kiosk)")
 
 
-def send_pressed_event_to_controller(stage_number):
-    print(f"Pressed event sent for stage: {stage_number}")
-
-
-def receive_pressed_event():
-    # simulate user input matching current stage or random
-    pressed = random.choice(stages)
-    print(f"Received pressed: {pressed}")
-    return pressed
-
-
-def deduce_percentage(amount):
-    global percent
-    percent = max(percent - amount, 0)
-    print(f"Percentage decreased to: {percent}%")  # Debug log
-    send_percentage_to_display()
-
-
 def check_correct_stage(pressed_stage):
     """Check if the pressed stage matches the current target stage"""
     global current_stage_index
@@ -143,45 +135,14 @@ def check_correct_stage(pressed_stage):
     return pressed_stage == current_target_stage
 
 
-def cycle_completed():
-    """Check if we've completed all 4 stages"""
-    return current_stage_index >= len(stages) - 1
-
-
 def increase_percentage(amount):
     global percent
     percent = min(percent + amount, 100)
     print(f"Percentage increased to: {percent}%")  # Debug log
-    send_percentage_to_display()
 
 
 def log_pressed(pressed):
     print(f"Correct button pressed: {pressed}")
-
-
-def main_loop():
-    global current_stage_index, last_percent_deduction_time, last_game_reset_time
-    setup_game()
-    while True:
-        # if time.time() - last_percent_deduction_time > 10:  # every 10 sec
-        #     deduce_percentage(10)
-        #     last_percent_deduction_time = time.time()
-
-        pressed = receive_pressed_event()
-
-        if check_correct_stage(pressed):
-            if cycle_completed():
-                increase_percentage(10)
-                reset_cycle()
-            else:
-                log_pressed(pressed)
-                current_stage_index += 1  # progress to next stage
-        else:
-            reset_cycle()
-
-
-def setup_game():
-    reset_cycle()
 
 
 def get_page_for_stage(stage_name: str) -> str:
@@ -198,8 +159,6 @@ def print_mapping():
 
 
 def start_percentage_server(port: int = 9000):
-    global percentage_server_thread
-
     def make_percentage_handler():
         class PercentageHandler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -222,15 +181,6 @@ def start_percentage_server(port: int = 9000):
                     # Serve percentage.html if exists
                     if self.path == "/" or self.path == "":
                         page_path = os.path.join(frontend_dir, "pages", "percentage.html")
-                        if not os.path.exists(page_path):
-                            # Try index.html as fallback
-                            page_path = os.path.join(frontend_dir, "index.html")
-                            if not os.path.exists(page_path):
-                                self.send_response(404)
-                                self.end_headers()
-                                self.wfile.write(b"Percentage page not found")
-                                return
-
                         with open(page_path, "rb") as f:
                             content = f.read()
                         self.send_response(200)
@@ -283,14 +233,10 @@ def start_percentage_server(port: int = 9000):
     server = HTTPServer(("", port), handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
-    percentage_server_thread = (server, t, port)
     print(f"Started percentage display server on http://localhost:{port}")
-    return percentage_server_thread
 
 
 def start_kiosk_servers(base_port: int = 8001):
-    global kiosk_server_threads
-
     def make_handler(kiosk_id):
         class KioskHandler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -331,6 +277,29 @@ def start_kiosk_servers(base_port: int = 8001):
 
                     if self.path.startswith("/api/loading/state"):
                         response_data = get_loading_state()
+                        content = json.dumps(response_data).encode()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                        return
+
+                    if self.path.startswith("/api/reload"):
+                        response_data = get_reload_state()
+                        content = json.dumps(response_data).encode()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                        return
+
+                    if self.path.startswith("/api/completed-stages"):
+                        global completed_stages_in_cycle
+                        response_data = {'completed_stages': completed_stages_in_cycle.copy()}
                         content = json.dumps(response_data).encode()
                         self.send_response(200)
                         self.send_header("Content-Type", "application/json")
@@ -423,11 +392,23 @@ def start_kiosk_servers(base_port: int = 8001):
                         
                         if pressed_stage:
                             # Check if this is the correct stage to press
-                            global last_click_result, current_stage_index
+                            global last_click_result, current_stage_index, completed_stages_in_cycle
                             if check_correct_stage(pressed_stage):
-                                increase_percentage(15)
-                                
+                                previous_stage_index = current_stage_index
                                 current_stage_index = (current_stage_index + 1) % len(stages)
+                                
+                                # Add to completed stages if not already there
+                                if pressed_stage not in completed_stages_in_cycle:
+                                    completed_stages_in_cycle.append(pressed_stage)
+                                
+                                # Check if cycle completed (wrapped from last stage to first)
+                                cycle_completed = previous_stage_index == len(stages) - 1 and current_stage_index == 0
+                                
+                                if cycle_completed:
+                                    increase_percentage(15)
+                                    randomize_order()
+                                    trigger_reload()
+                                    completed_stages_in_cycle = []
                                 
                                 log_pressed(pressed_stage)
                                 send_stage_number_to_kiosks()  # Print new target stage
@@ -439,10 +420,13 @@ def start_kiosk_servers(base_port: int = 8001):
                                     'status': 'correct',
                                     'stage': pressed_stage,
                                     'next_stage': stages[current_stage_index],
-                                    'percentage': percent
+                                    'percentage': percent,
+                                    'cycle_completed': cycle_completed,
+                                    'completed_stages': completed_stages_in_cycle.copy()
                                 }
                             else:
                                 restart_cycle()
+                                completed_stages_in_cycle = []
                                 
                                 # Set result for loading screen
                                 last_click_result = 'incorrect'
@@ -451,7 +435,8 @@ def start_kiosk_servers(base_port: int = 8001):
                                     'status': 'incorrect',
                                     'pressed': pressed_stage,
                                     'expected': stages[current_stage_index],
-                                    'reset_to': 'stage1'
+                                    'reset_to': 'stage1',
+                                    'completed_stages': []
                                 }
                         else:
                             response_data = {'error': 'No stage assigned to this kiosk'}
@@ -492,48 +477,12 @@ def start_kiosk_servers(base_port: int = 8001):
         threads.append((server, t, port, kiosk))
         print(f"Started kiosk server for Kiosk {kiosk} on http://localhost:{port}")
 
-    kiosk_server_threads.extend(threads)
     return threads
-
-
-def mapping_view():
-    return stage_by_kiosk
-
-
-def port_view(port_id):
-    try:
-        port_id = int(port_id)
-        if port_id in stage_by_kiosk:
-            stage = stage_by_kiosk[port_id]
-            page = get_page_for_stage(stage)
-            return {
-                "port": port_id,
-                "stage": stage,
-                "page": page
-            }
-        else:
-            return {"error": "port not found"}
-    except ValueError:
-        return {"error": "invalid port id"}
-
-
-def randomize_view():
-    try:
-        randomize_order()
-        return {
-            "status": "ok",
-            "stage_order": stages_order,
-            "mapping": stage_by_kiosk
-        }
-    except Exception as e:
-        return {"error": str(e)}
 
 
 def setup():
     # Randomize stage order
     randomize_order()
-    # Send initial percentage to display
-    send_percentage_to_display()
     # Send first stage number to kiosks
     send_stage_number_to_kiosks()
     # Start servers
@@ -544,10 +493,7 @@ def setup():
 
 
 def loop():
-    global current_stage_index, last_percent_deduction_time, last_game_reset_time
-    # if time.time() - last_percent_deduction_time > 30:  # every 30 sec
-    #     deduce_percentage(PERCENT_STEP)
-    #     last_percent_deduction_time = time.time()
+    pass
 
 if __name__ == "__main__":
     setup()
