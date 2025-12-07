@@ -21,6 +21,7 @@ completed_stages_in_cycle = []
 show_loading = False
 loading_timeout = None
 last_click_result = None  # 'correct' or 'incorrect'
+cycle_completed_flag = False
 
 # Global state for reload
 reload_triggered = False
@@ -45,18 +46,18 @@ def trigger_loading():
 
 def reset_loading():
     """Reset loading screen state"""
-    global show_loading, last_click_result, reload_triggered
+    global show_loading, last_click_result, reload_triggered, cycle_completed_flag
     show_loading = False
     last_click_result = None  # Clear result when loading resets
-    # Reload is already triggered, it will be checked by frontend
-
+    cycle_completed_flag = False
 
 def get_loading_state():
     """Get current loading state"""
-    global show_loading, last_click_result
+    global show_loading, last_click_result, cycle_completed_flag
     return {
         'show_loading': show_loading,
-        'click_result': last_click_result
+        'click_result': last_click_result,
+        'cycle_completed': cycle_completed_flag
     }
 
 
@@ -106,6 +107,7 @@ def randomize_order():
     for i, stage in enumerate(stages_order):
         stage_by_kiosk[available_kiosks[i]] = stage
     
+    print_mapping()
     return stages_order
 
 
@@ -392,7 +394,7 @@ def start_kiosk_servers(base_port: int = 8001):
                         
                         if pressed_stage:
                             # Check if this is the correct stage to press
-                            global last_click_result, current_stage_index, completed_stages_in_cycle
+                            global last_click_result, current_stage_index, completed_stages_in_cycle, cycle_completed_flag
                             if check_correct_stage(pressed_stage):
                                 previous_stage_index = current_stage_index
                                 current_stage_index = (current_stage_index + 1) % len(stages)
@@ -407,8 +409,10 @@ def start_kiosk_servers(base_port: int = 8001):
                                 if cycle_completed:
                                     increase_percentage(15)
                                     randomize_order()
-                                    trigger_reload()
                                     completed_stages_in_cycle = []
+                                    cycle_completed_flag = True
+                                else:
+                                    cycle_completed_flag = False
                                 
                                 log_pressed(pressed_stage)
                                 send_stage_number_to_kiosks()  # Print new target stage
@@ -427,6 +431,7 @@ def start_kiosk_servers(base_port: int = 8001):
                             else:
                                 restart_cycle()
                                 completed_stages_in_cycle = []
+                                cycle_completed_flag = False
                                 
                                 # Set result for loading screen
                                 last_click_result = 'incorrect'
