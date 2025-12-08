@@ -46,13 +46,7 @@ main {
   opacity: 0;
   animation: fadeInUp 0.6s ease-out 0.2s forwards;
 }
-.restoring-content .header-section,
-.restoring-content .rectangle,
-.restoring-content .diagram-container,
-.restoring-content .red-button {
-  animation: none !important;
-  opacity: 0;
-}
+
 h1 {
   font-size: 56px;
   font-weight: 700;
@@ -304,4 +298,8 @@ span.ripple {
 }
 .loading-fade-out {
   animation: fadeOut 0.4s ease-out forwards;
+}
+.red-button.button-disabled {
+  cursor: not-allowed;
+  background-color: #cb5252;
 }
