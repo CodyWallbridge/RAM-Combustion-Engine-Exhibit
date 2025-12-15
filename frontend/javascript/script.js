@@ -19,27 +19,68 @@ function createRipple(event) {
     });
 }
 
+const currentPort = window.location.port || '8001';
+const POLL_INTERVAL = 250;
+
 const button = document.querySelector('.red-button');
-if (button) {
-    button.addEventListener('click', createRipple);
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 3000) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal })
+        .finally(() => clearTimeout(timeoutId));
+}
+
+function attachRedButtonHandlers(targetButton) {
+    if (!targetButton) return;
+    if (targetButton.__handlersAttached) return;
+    
+    // Clean up any stale data attribute from previous renders
+    if (targetButton.hasAttribute('data-bound')) {
+        targetButton.removeAttribute('data-bound');
+    }
+    
+    targetButton.__handlersAttached = true;
+    targetButton.addEventListener('click', createRipple);
+    
     let isProcessing = false;
     button.addEventListener('click', function() {
         if (button.disabled || isProcessing) return;
         isProcessing = true;
-        button.setAttribute('data-processing', 'true');
-        button.disabled = true;
-        const currentPort = window.location.port || '8001';
-        fetch(`http://localhost:${currentPort}/api/button/press`, {
+        targetButton.setAttribute('data-processing', 'true');
+        targetButton.disabled = true;
+        
+        fetchWithTimeout(`http://localhost:${currentPort}/api/button/press`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             }
-        })
+        }, 5000)
         .then(response => response.json())
         .then(data => {
             isProcessing = false;
-            button.removeAttribute('data-processing');
-            if (data.completed_stages !== undefined) {
+            targetButton.removeAttribute('data-processing');
+            if (data.status === 'correct') {
+                if (!targetButton.getAttribute('data-original-text')) {
+                    targetButton.setAttribute('data-original-text', targetButton.textContent);
+                }
+                targetButton.disabled = true;
+                targetButton.classList.add('button-disabled');
+                targetButton.textContent = 'Correctly selected!';
+                if (data.cycle_completed) {
+                    suppressStageResetDuringCompletion = true;
+                    if (!isCurrentlyShowingLoading && !isFadingOut && !isLoadingTransitionPending) {
+                        switchToLoadingPage({ click_result: 'correct', cycle_completed: true });
+                    }
+                }
+            } else {
+                // On incorrect, lock UI until loading screen takes over to avoid flicker/reset.
+                suppressStageResetDuringCompletion = true;
+                if (!isCurrentlyShowingLoading && !isFadingOut && !isLoadingTransitionPending) {
+                    switchToLoadingPage({ click_result: 'incorrect' });
+                }
+            }
+            if (data.completed_stages !== undefined && !suppressStageResetDuringCompletion) {
                 setTimeout(() => {
                     checkCompletedStages();
                 }, 100);
@@ -55,7 +96,7 @@ if (button) {
 }
 
 function updatePercentage() {
-    fetch('http://localhost:9000/api/percentage')
+    fetchWithTimeout('http://localhost:9000/api/percentage')
       .then(response => {
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -83,7 +124,7 @@ function initPercentagePolling() {
   if (displayElement) {
     console.log('Starting percentage polling...');
     updatePercentage();
-    setInterval(updatePercentage, 100);
+    setInterval(updatePercentage, 500);
   } else {
     console.error('percentage-display element not found!');
   }
@@ -96,9 +137,105 @@ if (document.getElementById('percentage-display') && document.getElementById('pr
 let originalPageContent = null;
 let isCurrentlyShowingLoading = false;
 let isFadingOut = false;
+let isRestoringContent = false;
+let isLoadingTransitionPending = false; // Marks that loading is triggered but animation not finished
+let currentStagePage = null;
+let renderedStage = null;
+let stageContentCache = {};
+let suppressStageResetDuringCompletion = false; // Prevent flicker before loading after completing final stage
+let pendingStageRefresh = false;
+let loadingPollInFlight = false;
+let reloadPollInFlight = false;
+let completedPollInFlight = false;
+let loadingEndTimestamp = null;
+let loadingRestoreTimer = null;
+let lastReloadState = false;
 
-function switchToLoadingPage() {
+function normalizeStagePagePath(pagePath) {
+    if (!pagePath) return null;
+    return pagePath.startsWith('/') ? pagePath.slice(1) : pagePath;
+}
+
+async function fetchStageMainContent(stageInfo) {
+    if (!stageInfo || !stageInfo.page) return null;
+    
+    const normalizedPath = normalizeStagePagePath(stageInfo.page);
+    if (!normalizedPath) return null;
+    
+    if (stageContentCache[normalizedPath]) {
+        return stageContentCache[normalizedPath];
+    }
+    
+    const response = await fetch(`http://localhost:${currentPort}/${normalizedPath}`);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch stage page (${response.status})`);
+    }
+    const html = await response.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const newMain = doc.querySelector('main');
+    if (!newMain) return null;
+    
+    const mainHtml = newMain.innerHTML;
+    stageContentCache[normalizedPath] = mainHtml;
+    return mainHtml;
+}
+
+async function renderStageContent(stageInfo, options = {}) {
+    const main = document.querySelector('main');
+    if (!main) return;
+    
+    let mainHtml = null;
+    try {
+        mainHtml = await fetchStageMainContent(stageInfo);
+    } catch (error) {
+        console.error('Error loading stage content:', error);
+    }
+    
+    if (!mainHtml && originalPageContent) {
+        mainHtml = originalPageContent;
+    }
+    
+    if (!mainHtml) return;
+    
+    main.innerHTML = mainHtml;
+    originalPageContent = mainHtml;
+    pendingStageRefresh = false;
+    
+    if (stageInfo && stageInfo.stage) {
+        renderedStage = stageInfo.stage;
+    }
+    if (stageInfo && stageInfo.page) {
+        currentStagePage = stageInfo.page;
+    }
+    
+    if (options.fadeIn) {
+        main.classList.add('fade-in');
+        setTimeout(() => {
+            main.classList.remove('fade-in');
+        }, 400);
+    }
+    
+    attachRedButtonHandlers(main.querySelector('.red-button'));
+    checkCompletedStages();
+}
+
+function scheduleLoadingRestore(endTimeMs) {
+    if (!endTimeMs) return;
+    loadingEndTimestamp = endTimeMs;
+    if (loadingRestoreTimer) {
+        clearTimeout(loadingRestoreTimer);
+    }
+    const delay = Math.max(0, endTimeMs - Date.now());
+    loadingRestoreTimer = setTimeout(() => {
+        loadingRestoreTimer = null;
+        restoreOriginalPage();
+    }, delay);
+}
+
+function switchToLoadingPage(serverState = null) {
     if (isCurrentlyShowingLoading || isFadingOut) return; 
+    isLoadingTransitionPending = true;
     const main = document.querySelector('main');
     if (main) {
         if (!originalPageContent) {
@@ -118,110 +255,98 @@ function switchToLoadingPage() {
             `;
             isCurrentlyShowingLoading = true;
             isFadingOut = false;
-            
-            const currentPort = window.location.port || '8001';
-            fetch(`http://localhost:${currentPort}/api/loading/state`)
-                .then(response => response.json())
-                .then(data => {
-                    const displayElement = document.getElementById('percentage-display');
-                    if (displayElement && data.click_result) {
-                        const message = data.click_result === 'correct' ? 'Correct!' : 
-                                       data.click_result === 'incorrect' ? 'Incorrect.' : 'Loading';
-                        displayElement.textContent = message;
-                        if (data.click_result === 'incorrect') {
-                            const label = document.getElementById('label');
-                            label.textContent = "Restart cycle from stage 1!"; 
-                        }
+            isLoadingTransitionPending = false;
+
+            if (serverState) {
+                const displayElement = document.getElementById('percentage-display');
+                const labelElement = document.getElementById('label');
+                if (displayElement) {
+                    const message = serverState.click_result === 'correct'
+                        ? 'Cycle successfully completed! New random cycle loading...'
+                        : serverState.click_result === 'incorrect'
+                            ? 'Incorrect.'
+                            : 'Loading';
+                    displayElement.textContent = message;
+                }
+                if (serverState.click_result === 'incorrect') {
+                    const label = document.getElementById('label');
+                    if (label) {
+                        label.textContent = "Restart cycle from stage 1!";
                     }
-                })
-                .catch(error => {
-                });
+                } else if (serverState.cycle_completed && labelElement) {
+                    labelElement.textContent = "Cycle successfully completed! New random cycle loading...";
+                }
+                if (serverState.loading_end_time) {
+                    scheduleLoadingRestore(serverState.loading_end_time * 1000);
+                }
+            }
         }, 400);
     }
 }
 
 function restoreOriginalPage() {
-    if (!isCurrentlyShowingLoading) return; 
-    const main = document.querySelector('main');
-    if (main && originalPageContent) {
-        const loadingContainer = main.querySelector('.percentage-container');
-        if (loadingContainer) {
-            loadingContainer.classList.add('loading-fade-out');
-        } else {
-            main.classList.add('fade-out');
-        }
-        setTimeout(() => {
-            if (loadingContainer) {
-                loadingContainer.classList.remove('loading-fade-out');
-            } else {
-                main.classList.remove('fade-out');
-            }           
-            main.classList.add('restoring-content');
-            
-            main.innerHTML = originalPageContent;
-            isCurrentlyShowingLoading = false;
-            
-            setTimeout(() => {
-                main.classList.remove('restoring-content');
-                
-                // Get the kiosk stage FIRST before setting up button
-                getCurrentKioskStage().then(() => {
-                    // THEN check completed stages to set disabled state
-                    checkCompletedStages();
-                    
-                    // FINALLY set up the button event listeners
-                    const redButton = main.querySelector('.red-button');
-                    if (redButton) {
-                        let isProcessing = false;
-                        redButton.addEventListener('click', createRipple);
-                        redButton.addEventListener('click', function() {
-                            if (redButton.disabled || isProcessing) return;
-                            isProcessing = true;
-                            redButton.setAttribute('data-processing', 'true');
-                            redButton.disabled = true;
-                            const currentPort = window.location.port || '8001';
-                            fetch(`http://localhost:${currentPort}/api/button/press`, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json'
-                                }
-                            })
-                            .then(response => response.json())
-                            .then(data => {
-                                isProcessing = false;
-                                redButton.removeAttribute('data-processing');
-                                if (data.completed_stages !== undefined) {
-                                    setTimeout(() => {
-                                        checkCompletedStages();
-                                    }, 100);
-                                }
-                            })
-                            .catch(error => {
-                                console.error('Error triggering loading:', error);
-                                isProcessing = false;
-                                redButton.removeAttribute('data-processing');
-                                redButton.disabled = false;
-                            });
-                        });
-                    }
-                });
-                
-                checkReloadState();
-            }, 50);
-        }, 400);
+    if (!isCurrentlyShowingLoading || isRestoringContent) return; 
+    if (loadingRestoreTimer) {
+        clearTimeout(loadingRestoreTimer);
+        loadingRestoreTimer = null;
     }
+    loadingEndTimestamp = null;
+    isRestoringContent = true;
+    const main = document.querySelector('main');
+    if (!main) {
+        isRestoringContent = false;
+        return;
+    }
+    
+    const loadingContainer = main.querySelector('.percentage-container');
+    if (loadingContainer) {
+        loadingContainer.classList.add('loading-fade-out');
+    } else {
+        main.classList.add('fade-out');
+    }
+    
+    const stageInfoPromise = getCurrentKioskStage();
+    
+    setTimeout(() => {
+        stageInfoPromise
+            .then(stageInfo => {
+                if (stageInfo) {
+                    return renderStageContent(stageInfo, { fadeIn: true });
+                }
+                if (originalPageContent) {
+                    main.innerHTML = originalPageContent;
+                    attachRedButtonHandlers(main.querySelector('.red-button'));
+                    checkCompletedStages();
+                }
+                return null;
+            })
+            .finally(() => {
+                isCurrentlyShowingLoading = false;
+                isRestoringContent = false;
+                suppressStageResetDuringCompletion = false;
+                isLoadingTransitionPending = false;
+            });
+    }, 400);
 }
 
 function checkLoadingState() {
-    const currentPort = window.location.port || '8001';
-    fetch(`http://localhost:${currentPort}/api/loading/state`)
+    if (loadingPollInFlight) return;
+    loadingPollInFlight = true;
+    fetchWithTimeout(`http://localhost:${currentPort}/api/loading/state`)
         .then(response => response.json())
         .then(data => {
+            if (data.show_loading) {
+                suppressStageResetDuringCompletion = true;
+            }
+            if (data.cycle_completed) {
+                suppressStageResetDuringCompletion = true;
+            }
             if (isCurrentlyShowingLoading && data.click_result) {
                 const displayElement = document.getElementById('percentage-display');
                 if (displayElement) {
-                    const message = data.click_result === 'correct' ? 'Correct!' : 
-                                   data.click_result === 'incorrect' ? 'Incorrect.' : 'Loading';
+                    const message = data.click_result === 'correct'
+                        ? 'Cycle correctly completed!'
+                        : data.click_result === 'incorrect' ? 'Incorrect.' : 'Loading';
                     if (displayElement.textContent !== message) {
                         displayElement.textContent = message;
                     }
@@ -234,36 +359,51 @@ function checkLoadingState() {
                 }
             }
             if (data.show_loading && !isCurrentlyShowingLoading) {
-                switchToLoadingPage();
+                switchToLoadingPage(data);
+            } else if (data.show_loading && isCurrentlyShowingLoading && data.loading_end_time) {
+                scheduleLoadingRestore(data.loading_end_time * 1000);
             } else if (!data.show_loading && isCurrentlyShowingLoading) {
                 restoreOriginalPage();
-                setTimeout(() => {
-                    checkReloadState();
-                }, 600);
-            }
-            
-            if (!data.show_loading && !isCurrentlyShowingLoading) {
-                checkReloadState();
+            } else if (!data.show_loading && isLoadingTransitionPending) {
+                isLoadingTransitionPending = false;
+                suppressStageResetDuringCompletion = false;
+                checkCompletedStages();
             }
         })
         .catch(error => {
             console.error('Error checking loading state:', error);
+        })
+        .finally(() => {
+            loadingPollInFlight = false;
         });
 }
 
 function checkReloadState() {
-    const currentPort = window.location.port || '8001';
-    fetch(`http://localhost:${currentPort}/api/reload`)
+    if (reloadPollInFlight) return;
+    reloadPollInFlight = true;
+    fetchWithTimeout(`http://localhost:${currentPort}/api/reload`)
         .then(response => response.json())
         .then(data => {
-            if (data.reload) {
-                setTimeout(() => {
-                    window.location.reload();
-                }, 100);
+            if (data.reload && !lastReloadState) {
+                pendingStageRefresh = true;
+                if (!isCurrentlyShowingLoading && !isRestoringContent) {
+                    getCurrentKioskStage().then(stageInfo => {
+                        if (stageInfo) {
+                            renderStageContent(stageInfo, { fadeIn: true });
+                        }
+                    });
+                }
+            } else if (!data.reload && lastReloadState) {
+                // Reload cycle finished
+                pendingStageRefresh = false;
             }
+            lastReloadState = data.reload;
         })
         .catch(error => {
             console.error('Error checking reload state:', error);
+        })
+        .finally(() => {
+            reloadPollInFlight = false;
         });
 }
 
@@ -287,10 +427,19 @@ function getCurrentKioskStage() {
 }
 
 function checkCompletedStages() {
-    const currentPort = window.location.port || '8001';
-    fetch(`http://localhost:${currentPort}/api/completed-stages`)
+    if (suppressStageResetDuringCompletion || isCurrentlyShowingLoading || isLoadingTransitionPending) return;
+    if (completedPollInFlight) return;
+    completedPollInFlight = true;
+    fetchWithTimeout(`http://localhost:${currentPort}/api/completed-stages`)
         .then(response => response.json())
         .then(data => {
+            if (suppressStageResetDuringCompletion || isCurrentlyShowingLoading || isLoadingTransitionPending) {
+                return;
+            }
+            if (data.cycle_completed) {
+                suppressStageResetDuringCompletion = true;
+                return;
+            }
             const completedStages = data.completed_stages || [];
             const redButton = document.querySelector('.red-button');
             
@@ -304,9 +453,9 @@ function checkCompletedStages() {
                     redButton.disabled = true;
                     // DON'T set opacity inline - use a class instead
                     redButton.classList.add('button-disabled');
-                    if (redButton.textContent !== 'Stage already selected!') {
+                    if (redButton.textContent !== 'Correctly selected!') {
                         redButton.setAttribute('data-original-text', redButton.textContent);
-                        redButton.textContent = 'Stage already selected!';
+                        redButton.textContent = 'Correctly selected!';
                     }
                 } else {
                     redButton.disabled = false;
@@ -322,6 +471,9 @@ function checkCompletedStages() {
         })
         .catch(error => {
             console.error('Error checking completed stages:', error);
+        })
+        .finally(() => {
+            completedPollInFlight = false;
         });
 }
 
@@ -339,19 +491,20 @@ if (isStagePage) {
         checkCompletedStages();
     });
     checkLoadingState();
-    setInterval(checkLoadingState, 100);
+    setInterval(checkLoadingState, POLL_INTERVAL);
     checkReloadState();
-    setInterval(checkReloadState, 100);
+    setInterval(checkReloadState, POLL_INTERVAL);
     setInterval(() => {
         checkCompletedStages();
-    }, 200);
+    }, POLL_INTERVAL);
 } else if (isOnLoadingPage) {
-    const currentPort = window.location.port || '8001';
-    fetch(`http://localhost:${currentPort}/api/loading/state`)
+    isCurrentlyShowingLoading = true;
+    fetchWithTimeout(`http://localhost:${currentPort}/api/loading/state`)
         .then(response => response.json())
         .then(data => {
-            const message = data.click_result === 'correct' ? 'Correct!' : 
-                           data.click_result === 'incorrect' ? 'Incorrect.' : 'Loading';
+            const message = data.click_result === 'correct'
+                ? 'Cycle correctly completed!'
+                : data.click_result === 'incorrect' ? 'Incorrect.' : 'Loading';
             const displayElement = document.getElementById('percentage-display');
             if (displayElement) {
                 displayElement.textContent = message;
@@ -361,6 +514,14 @@ if (isStagePage) {
                 if (label) {
                     label.textContent = "Restart cycle from stage 1!";
                 }
+            } else if (data.cycle_completed) {
+                const label = document.getElementById('label');
+                if (label) {
+                    label.textContent = "Cycle successfully completed! New random cycle loading...";
+                }
+            }
+            if (data.loading_end_time) {
+                scheduleLoadingRestore(data.loading_end_time * 1000);
             }
         })
         .catch(error => {
@@ -389,7 +550,7 @@ if (isStagePage) {
             console.error('Error fetching stage page:', error);
         });    
     checkLoadingState();
-    setInterval(checkLoadingState, 100);
+    setInterval(checkLoadingState, POLL_INTERVAL);
     checkReloadState();
-    setInterval(checkReloadState, 100);
+    setInterval(checkReloadState, POLL_INTERVAL);
 }
