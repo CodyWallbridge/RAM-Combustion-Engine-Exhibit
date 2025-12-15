@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 global percent
 percent = 0
+LOADING_DURATION = 3.0
 KIOSK_IDS = [1, 2, 3, 4]
 stages = ['stage1', 'stage2', 'stage3', 'stage4']
 stages_order = []  # To be randomized
@@ -22,6 +23,7 @@ show_loading = False
 loading_timeout = None
 last_click_result = None  # 'correct' or 'incorrect'
 cycle_completed_flag = False
+loading_end_time = None
 
 # Global state for reload
 reload_triggered = False
@@ -35,29 +37,32 @@ def get_percentage_view():
 
 def trigger_loading():
     """Trigger loading screen on all kiosks"""
-    global show_loading, loading_timeout
+    global show_loading, loading_timeout, loading_end_time
     show_loading = True
+    loading_end_time = time.time() + LOADING_DURATION
     if loading_timeout:
         loading_timeout.cancel()
-    loading_timeout = threading.Timer(3.0, reset_loading)
+    loading_timeout = threading.Timer(LOADING_DURATION, reset_loading)
     loading_timeout.start()
-    return {'status': 'loading_triggered'}
+    return {'status': 'loading_triggered', 'loading_end_time': loading_end_time}
 
 
 def reset_loading():
     """Reset loading screen state"""
-    global show_loading, last_click_result, reload_triggered, cycle_completed_flag
+    global show_loading, last_click_result, reload_triggered, cycle_completed_flag, loading_end_time
     show_loading = False
     last_click_result = None  # Clear result when loading resets
     cycle_completed_flag = False
+    loading_end_time = None
 
 def get_loading_state():
     """Get current loading state"""
-    global show_loading, last_click_result, cycle_completed_flag
+    global show_loading, last_click_result, cycle_completed_flag, loading_end_time
     return {
         'show_loading': show_loading,
         'click_result': last_click_result,
-        'cycle_completed': cycle_completed_flag
+        'cycle_completed': cycle_completed_flag,
+        'loading_end_time': loading_end_time
     }
 
 
@@ -237,6 +242,75 @@ def start_percentage_server(port: int = 9000):
     t.start()
     print(f"Started percentage display server on http://localhost:{port}")
 
+def start_demo_server(port: int = 9001):
+    def make_demo_handler():
+        class DemoHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                try:
+                    base_dir = os.path.dirname(os.path.abspath(__file__))
+                    frontend_dir = os.path.normpath(os.path.join(base_dir, "..", "frontend"))
+
+                    if self.path == "/" or self.path == "":
+                        page_path = os.path.join(frontend_dir, "pages", "demo.html")
+                        if not os.path.exists(page_path):
+                            self.send_response(404)
+                            self.send_header("Content-Type", "text/plain")
+                            self.end_headers()
+                            self.wfile.write(b"Demo page not found")
+                            return
+                        with open(page_path, "rb") as f:
+                            content = f.read()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html")
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                        return
+
+                    # Serve static assets for the demo page
+                    file_path = os.path.normpath(os.path.join(frontend_dir, self.path.lstrip("/")))
+                    if os.path.exists(file_path) and os.path.commonpath([frontend_dir, file_path]) == frontend_dir:
+                        ext = os.path.splitext(file_path)[1].lower()
+                        mime = {
+                            ".css": "text/css",
+                            ".js": "application/javascript",
+                            ".png": "image/png",
+                            ".jpg": "image/jpeg",
+                            ".jpeg": "image/jpeg",
+                            ".svg": "image/svg+xml",
+                            ".html": "text/html"
+                        }.get(ext, "application/octet-stream")
+                        with open(file_path, "rb") as f:
+                            content = f.read()
+                        self.send_response(200)
+                        self.send_header("Content-Type", mime)
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                        return
+
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    self.wfile.write(b"Not found")
+
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    self.wfile.write(str(e).encode())
+
+            def log_message(self, format, *args):
+                pass
+
+        return DemoHandler
+
+    handler = make_demo_handler()
+    server = HTTPServer(("", port), handler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    print(f"Started demo dashboard on http://localhost:{port}")
+
 
 def start_kiosk_servers(base_port: int = 8001):
     def make_handler(kiosk_id):
@@ -300,8 +374,11 @@ def start_kiosk_servers(base_port: int = 8001):
                         return
 
                     if self.path.startswith("/api/completed-stages"):
-                        global completed_stages_in_cycle
-                        response_data = {'completed_stages': completed_stages_in_cycle.copy()}
+                        global completed_stages_in_cycle, cycle_completed_flag
+                        response_data = {
+                            'completed_stages': completed_stages_in_cycle.copy(),
+                            'cycle_completed': cycle_completed_flag
+                        }
                         content = json.dumps(response_data).encode()
                         self.send_response(200)
                         self.send_header("Content-Type", "application/json")
@@ -411,15 +488,20 @@ def start_kiosk_servers(base_port: int = 8001):
                                     randomize_order()
                                     completed_stages_in_cycle = []
                                     cycle_completed_flag = True
+                                    trigger_loading()  # Show completion/loading screen for final stage
+                                    last_click_result = 'correct'  # Only show correct message at cycle boundary
+                                    # Delay reload until after the loading screen duration to avoid flicker
+                                    global reload_timeout
+                                    reload_timeout = threading.Timer(LOADING_DURATION, trigger_reload)
+                                    reload_timeout.start()
                                 else:
                                     cycle_completed_flag = False
+                                    last_click_result = None  # Skip mid-cycle correct screen
                                 
                                 log_pressed(pressed_stage)
                                 send_stage_number_to_kiosks()  # Print new target stage
                                 
                                 # Set result for loading screen
-                                last_click_result = 'correct'
-                                
                                 response_data = {
                                     'status': 'correct',
                                     'stage': pressed_stage,
@@ -446,8 +528,9 @@ def start_kiosk_servers(base_port: int = 8001):
                         else:
                             response_data = {'error': 'No stage assigned to this kiosk'}
                         
-                        # Trigger loading on all kiosks
-                        trigger_loading()
+                        # Trigger loading only when incorrect
+                        if response_data.get('status') == 'incorrect':
+                            trigger_loading()
                         
                         content = json.dumps(response_data).encode()
                         self.send_response(200)
@@ -510,6 +593,7 @@ def setup():
     send_stage_number_to_kiosks()
     # Start servers
     start_percentage_server(9000)
+    start_demo_server(9001)
     start_kiosk_servers(8001)
     # Start background thread that decrements percentage every 3 seconds
     start_percentage_decrement_thread()
