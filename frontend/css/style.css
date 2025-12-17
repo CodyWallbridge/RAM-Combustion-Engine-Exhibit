@@ -58,6 +58,16 @@ h1 {
   letter-spacing: -1px;
   line-height: 1.1;
 }
+.stage-sequence {
+  font-size: 1.4rem;
+  color: #1a1a1a;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  opacity: 0;
+  animation: fadeInUp 0.5s ease-out 0.1s forwards;
+}
 .button-green {
   background-color: #388e3c !important;
   box-shadow: 0 4px 12px rgba(56, 142, 60, 0.3) !important;
@@ -75,6 +85,70 @@ h1 {
   background-color: rgba(1, 79, 110, 0.3);
   margin-top: 16px;
   margin-bottom: 0;
+}
+.game-mode-layout {
+  display: flex;
+  gap: 90px;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 1180px;
+  }
+.cta-panel {
+  flex: 1.2;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(1, 79, 110, 0.12);
+  padding: 28px 32px 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: fadeInLeft 0.6s ease-out 0.35s forwards;
+  opacity: 0;
+  margin-right: 500px;
+}
+.micro-note {
+  font-size: 1.4rem;
+  letter-spacing: 0.4px;
+  color: #014f6e;
+  font-weight: 700;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+.fun-fact-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #014f6e;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 1.6rem;
+  font-weight: 600;
+  box-shadow: 0 6px 16px rgba(1, 79, 110, 0.18);
+}
+.support-visual {
+  flex: 0.9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  animation: fadeInRight 0.6s ease-out 0.45s forwards;
+  opacity: 0;
+}
+.support-visual .fun-fact-chip {
+  margin-top: 6px;
+}
+.support-visual .diagram-container {
+  width: 100%;
+  max-width: 360px;
+}
+@media (max-width: 1080px) {
+  .game-mode-layout {
+    flex-direction: column;
+  }
+  .cta-panel, .support-visual {
+    width: 100%;
+  }
 }
 .container {
   display: flex;
@@ -204,6 +278,36 @@ h1 {
   transition: background 400ms;
   align-self: center;
   flex-shrink: 0;
+}
+.red-button.large-action {
+  width: 100%;
+  max-width: 520px;
+  padding: 26px 34px;
+  font-size: 2.3rem;
+  border-radius: 14px;
+  letter-spacing: 0.6px;
+  box-shadow: 0 12px 30px rgba(211, 47, 47, 0.4);
+}
+.red-button.giant-cta {
+  width: 50%;
+  max-width: none;
+  padding: 42px 38px;
+  font-size: 8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  box-shadow: 0 18px 44px rgba(211, 47, 47, 0.48);
+  height: 400px;
+}
+.game-mode-right {
+  gap: 18px;
+}
+@media (max-width: 900px) {
+  .game-mode-right {
+    width: 100%;
+  }
+  .red-button.large-action {
+    max-width: none;
+  }
 }
 span.ripple {
   position: absolute;
