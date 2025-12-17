@@ -35,6 +35,86 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 3000) {
         .finally(() => clearTimeout(timeoutId));
 }
 
+function waitForImageLoad(img, timeoutMs = 1200) {
+    return new Promise((resolve, reject) => {
+        const onLoad = () => {
+            cleanup();
+            resolve(true);
+        };
+        const onError = () => {
+            cleanup();
+            reject(new Error('error'));
+        };
+        const timer = setTimeout(() => {
+            cleanup();
+            reject(new Error('timeout'));
+        }, timeoutMs);
+        const cleanup = () => {
+            clearTimeout(timer);
+            img.removeEventListener('load', onLoad);
+            img.removeEventListener('error', onError);
+        };
+        img.addEventListener('load', onLoad);
+        img.addEventListener('error', onError);
+    });
+}
+
+const blobUrlRegistry = new WeakMap();
+
+async function ensureImageLoads(img, options = {}) {
+    if (!img) return;
+    const maxAttempts = options.maxAttempts || 6;
+    const timeoutMs = options.timeoutMs || 3000;
+    const baseSrc = img.dataset.srcOriginal || img.getAttribute('src');
+    if (!baseSrc) return;
+    img.dataset.srcOriginal = baseSrc;
+
+    const isLoaded = () => img.complete && img.naturalWidth > 0;
+    if (isLoaded()) return;
+
+    let lastObjectUrl = blobUrlRegistry.get(img);
+
+    const attachAndAwaitLoad = (url) => {
+        const loadPromise = waitForImageLoad(img, timeoutMs);
+        img.src = url;
+        return loadPromise;
+    };
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (!img.isConnected) return;
+        const bust = attempt === 1 ? '' : `${baseSrc.includes('?') ? '&' : '?'}cb=${Date.now()}-${attempt}`;
+        const urlToTry = `${baseSrc}${bust}`;
+        try {
+            await attachAndAwaitLoad(urlToTry);
+            if (lastObjectUrl) {
+                URL.revokeObjectURL(lastObjectUrl);
+                blobUrlRegistry.delete(img);
+            }
+            return;
+        } catch (_) {
+            try {
+                const response = await fetch(urlToTry, { cache: 'no-store' });
+                if (!response.ok) throw new Error(`status ${response.status}`);
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                blobUrlRegistry.set(img, objectUrl);
+                await attachAndAwaitLoad(objectUrl);
+                if (lastObjectUrl && lastObjectUrl !== objectUrl) {
+                    URL.revokeObjectURL(lastObjectUrl);
+                }
+                lastObjectUrl = objectUrl;
+                return;
+            } catch (err) {
+                if (attempt === maxAttempts) {
+                    console.warn(`Image failed after ${maxAttempts} attempts: ${baseSrc}`, err);
+                    return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 200 * attempt));
+            }
+        }
+    }
+}
+
 function attachRedButtonHandlers(targetButton) {
     if (!targetButton) return;
     if (targetButton.__handlersAttached) return;
@@ -216,6 +296,11 @@ async function renderStageContent(stageInfo, options = {}) {
     if (stageInfo && stageInfo.page) {
         currentStagePage = stageInfo.page;
     }
+    const diagramImages = Array.from(main.querySelectorAll('.diagram-image'));
+    if (diagramImages.length) {
+        Promise.allSettled(diagramImages.map(img => ensureImageLoads(img)))
+            .catch(() => {});
+    }
     
     if (options.fadeIn) {
         main.classList.add('fade-in');
@@ -268,7 +353,7 @@ function switchToLoadingPage(serverState = null) {
                 const labelElement = document.getElementById('label');
                 if (displayElement) {
                     const message = serverState.click_result === 'correct'
-                        ? 'Cycle successfully completed! New random cycle loading...'
+                        ? 'Cycle correctly completed!'
                         : serverState.click_result === 'incorrect'
                             ? 'Incorrect.'
                             : 'Loading';
@@ -280,7 +365,7 @@ function switchToLoadingPage(serverState = null) {
                         label.textContent = "Restart cycle from stage 1!";
                     }
                 } else if (serverState.cycle_completed && labelElement) {
-                    labelElement.textContent = "Cycle successfully completed! New random cycle loading...";
+                    labelElement.textContent = "Randomizing new cycle from stage 1";
                 }
                 if (serverState.loading_end_time) {
                     scheduleLoadingRestore(serverState.loading_end_time * 1000);
@@ -363,7 +448,7 @@ function checkLoadingState() {
                             label.textContent = "Restart cycle from stage 1!";
                         }
                     } else if (data.cycle_completed && labelElement) {
-                        labelElement.textContent = "Cycle successfully completed! New random cycle loading...";
+                        labelElement.textContent = "Randomizing new cycle from stage 1";
                     }
                 }
             }
@@ -535,7 +620,7 @@ if (isStagePage) {
             } else if (data.cycle_completed) {
                 const label = document.getElementById('label');
                 if (label) {
-                    label.textContent = "Cycle successfully completed! New random cycle loading...";
+                    label.textContent = "Randomizing new cycle from stage 1";
                 }
             }
             if (data.loading_end_time) {
