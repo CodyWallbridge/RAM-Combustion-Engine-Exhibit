@@ -5,6 +5,7 @@ import os
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+
 global percent
 percent = 0
 LOADING_DURATION = 3.0
@@ -13,10 +14,13 @@ stages = ['stage1', 'stage2', 'stage3', 'stage4']
 stages_order = []  # To be randomized
 current_stage_index = 0  # Index in stages list (0=stage1, 1=stage2, 2=stage3, 3=stage4)
 
+
 stage_by_kiosk = {}  # To be filled based on stage_order
+
 
 # Track completed stages in current cycle
 completed_stages_in_cycle = []
+
 
 # Global state for loading screen
 show_loading = False
@@ -24,6 +28,7 @@ loading_timeout = None
 last_click_result = None  # 'correct' or 'incorrect'
 cycle_completed_flag = False
 loading_end_time = None
+
 
 # Global state for reload
 reload_triggered = False
@@ -54,6 +59,7 @@ def reset_loading():
     last_click_result = None  # Clear result when loading resets
     cycle_completed_flag = False
     loading_end_time = None
+
 
 def get_loading_state():
     """Get current loading state"""
@@ -96,11 +102,13 @@ def reset_cycle():
     current_stage_index = 0  # Always start with stage1
     send_stage_number_to_kiosks()
 
+
 def restart_cycle():
     global current_stage_index, percent
     current_stage_index = 0  # Always start with stage1
     percent = max(percent - 10, 0)
     send_stage_number_to_kiosks()
+
 
 def randomize_order():
     global stages_order, stage_by_kiosk
@@ -153,8 +161,15 @@ def log_pressed(pressed):
 
 
 def get_page_for_stage(stage_name: str) -> str:
+    # **# <<< CHANGED: now returns the *game* page instead of the old stage page**
     stage_num = stage_name.replace('stage', '') if isinstance(stage_name, str) else str(stage_name)
-    return f"pages/stage{stage_num}.html"
+    return f"pages/game-stage{stage_num}.html"  # **CHANGED**
+
+
+def get_screensaver_page_for_stage(stage_name: str) -> str:
+    # **# <<< ADDED: helper to get the old stageX.html as screensaver**
+    stage_num = stage_name.replace('stage', '') if isinstance(stage_name, str) else str(stage_name)
+    return f"pages/stage{stage_num}.html"  # **ADDED**
 
 
 def print_mapping():
@@ -241,6 +256,7 @@ def start_percentage_server(port: int = 9000):
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     print(f"Started percentage display server on http://localhost:{port}")
+
 
 def start_demo_server(port: int = 9001):
     def make_demo_handler():
@@ -388,6 +404,34 @@ def start_kiosk_servers(base_port: int = 8001):
                         self.wfile.write(content)
                         return
 
+                    # **# <<< ADDED: route to serve screensaver (old stageX.html)**
+                    if self.path.startswith("/screensaver"):
+                        stage = stage_by_kiosk.get(kiosk_id)
+                        if stage is None:
+                            self.send_response(404)
+                            self.send_header("Content-Type", "text/plain")
+                            self.end_headers()
+                            self.wfile.write(b"No stage assigned")
+                            return
+
+                        page_path = os.path.join(frontend_dir, get_screensaver_page_for_stage(stage))
+                        if not os.path.exists(page_path):
+                            self.send_response(404)
+                            self.send_header("Content-Type", "text/plain")
+                            self.end_headers()
+                            self.wfile.write(b"Screensaver page not found")
+                            return
+
+                        with open(page_path, "rb") as f:
+                            content = f.read()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html")
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+                        return
+                    # **END ADDED**
+
                     if self.path == "/" or self.path == "":
                         # Check if we should show loading screen
                         if show_loading:
@@ -409,9 +453,10 @@ def start_kiosk_servers(base_port: int = 8001):
                             self.wfile.write(b"No stage assigned")
                             return
 
-                        # Extract stage number from 'stage1' -> '1'
-                        stage_num = stage.replace('stage', '') if isinstance(stage, str) else str(stage)
-                        page_path = os.path.join(frontend_dir, "pages", f"stage{stage_num}.html")
+                        # **# <<< CHANGED: serve game-stageX.html as the main page**
+                        stage_page_rel = get_page_for_stage(stage)  # pages/game-stageX.html
+                        page_path = os.path.join(frontend_dir, stage_page_rel)
+                        # **END CHANGED**
 
                         if not os.path.exists(page_path):
                             self.send_response(404)
@@ -603,6 +648,7 @@ def setup():
 
 def loop():
     pass
+
 
 if __name__ == "__main__":
     setup()

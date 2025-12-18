@@ -568,3 +568,43 @@ if (isStagePage) {
     checkReloadState();
     setInterval(checkReloadState, POLL_INTERVAL);
 }
+
+//  screensaver for game pages ---
+(function setupGameIdleTimer() {
+  const isGamePage = document.body.classList.contains("game-page");
+  if (!isGamePage) return;
+
+  const IDLE_TIMEOUT = 10000; // timer for screensaver to appear
+  let idleTimer = null;
+
+  function resetIdleTimer() {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(() => {
+      window.location.href = "/screensaver";
+    }, IDLE_TIMEOUT);
+  }
+
+  ["mousemove", "mousedown", "keydown", "touchstart", "scroll"].forEach(evt => {
+    window.addEventListener(evt, resetIdleTimer, { passive: true });
+  });
+
+  resetIdleTimer();
+})();
+
+// click back to game page
+(function setupScreensaverClick() {
+  const isScreensaver = document.body.classList.contains("screensaver-page");
+  if (!isScreensaver) return;
+
+  function goToGame() {
+    window.location.href = "/";
+  }
+
+  ["click", "mousedown", "touchstart", "keydown"].forEach(evt => {
+    window.addEventListener(evt, goToGame, { once: true });
+  });
+})();
+
+
